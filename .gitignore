@@ -11,6 +11,8 @@ node_modules
 dist
 dist-ssr
 *.local
+.env          <-- 加在這裡
+.env.local    <-- 加在這裡確保萬無一失
 
 # Editor directories and files
 .vscode/*
