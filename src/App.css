@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-primary: #3b82f6;
+  --color-brand-secondary: #1e293b;
+  
+  /* 自定義佈局寬度 */
+  --spacing-sidebar-width: 320px;
+}
+
+@layer base {
+  html, body, #root {
+    @apply h-full m-0 p-0 overflow-hidden;
+  }
+}
+
+@layer components {
+  /* 基礎佈局組件 */
+  .app-container {
+    @apply flex h-screen w-full bg-gray-50;
+  }
+
+  .main-content {
+    @apply flex-1 h-full overflow-y-auto p-6 bg-white;
+  }
+
+  .sidebar-fixed {
+    @apply w-[var(--spacing-sidebar-width)] h-full bg-gray-900 text-white border-l border-gray-200 overflow-y-auto;
+  }
+  
+  /* 通用按鈕樣式 */
+  .btn-primary {
+    @apply px-4 py-2 bg-brand-primary text-white rounded-lg hover:bg-blue-600 transition-colors;
+  }
+}

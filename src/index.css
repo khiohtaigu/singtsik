@@ -1,0 +1,26 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-primary: #1e293b;
+  --color-brand-bg: #cbd5e1;
+  --font-song: "Songti SC", "Noto Serif TC", "PMingLiU", "SimSun", serif;
+}
+
+@layer base {
+  html, body, #root {
+    /* 修正：移除 overflow-hidden，確保全網頁可以向下捲動 */
+    @apply m-0 p-0 font-sans bg-[#cbd5e1];
+    min-height: 100vh;
+  }
+  
+  /* 自定義捲動條樣式 */
+  ::-webkit-scrollbar {
+    @apply w-1.5 h-1.5;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-slate-400/50 rounded-full hover:bg-indigo-400;
+  }
+}
