@@ -59,10 +59,12 @@ function App() {
   const [scores, setScores] = useState({});
 
   const [isImporting, setIsImporting] = useState(false);
-  const [openPanel, setOpenPanel] = useState('batch'); 
+  const [openPanel, setOpenPanel] = useState('batch'); // 預設開啟批次面板
   const [isQRModalOpen, setIsQRModalOpen] = useState(false);
   const [qrTarget, setQRTarget] = useState(null);
   const [isClassEditMode, setIsClassEditMode] = useState(false);
+
+  // 批次匯入狀態
   const [batchTargetId, setBatchTargetId] = useState('q1');
   const [batchRawData, setBatchRawData] = useState('');
 
@@ -112,11 +114,18 @@ function App() {
       snap.forEach((doc) => {
         if (doc.id.startsWith(viewPrefix)) classes.push(doc.id.replace(`${viewPrefix}_`, ""));
       });
-      setAvailableClasses(classes.sort());
-      if (classes.length > 0 && !currentClass) setCurrentClass(classes[0]);
+      const sortedClasses = classes.sort();
+      setAvailableClasses(sortedClasses);
+      if (sortedClasses.length === 0) {
+        setCurrentClass(null);
+        setStudentList([]);
+        setScores({});
+      } else if (!sortedClasses.includes(currentClass)) {
+        setCurrentClass(sortedClasses[0]);
+      }
     });
     return () => unsub();
-  }, [viewPrefix, user?.uid]);
+  }, [viewPrefix, user?.uid, currentClass]);
 
   useEffect(() => {
     if (!user?.uid || !currentClass) return;
@@ -133,6 +142,8 @@ function App() {
         setExamVisibility(data.examVisibility || DEFAULT_VISIBILITY);
         setPickBestCount(data.pickBestCount || 3);
         setIsPaddingZero(data.isPaddingZero || false);
+      } else {
+        setStudentList([]);
       }
     });
     const unsubScore = onSnapshot(scoreRef, (s) => setScores(s.exists() ? s.data() : {}));
@@ -144,24 +155,24 @@ function App() {
     await setDoc(doc(db, `users/${user.uid}/metadata`, `${viewPrefix}_${currentClass}`), updates, { merge: true });
   };
 
-  // --- 修正：補上刪除班級函數 ---
   const handleDeleteClass = async (className) => {
-    if (!window.confirm(`確定要刪除「${className}」班的所有成績與學生資料嗎？此動作無法復原。`)) return;
+    if (!window.confirm(`確定要刪除「${className}」班的所有資料嗎？`)) return;
     try {
       const combinedId = `${viewPrefix}_${className}`;
       await deleteDoc(doc(db, `users/${user.uid}/metadata`, combinedId));
       await deleteDoc(doc(db, `users/${user.uid}/scores`, combinedId));
-      if (currentClass === className) {
-        setCurrentClass(null);
-        setStudentList([]);
-        setScores({});
-      }
-    } catch (err) {
-      alert("刪除失敗");
-    }
+    } catch (err) { alert("刪除失敗"); }
   };
 
   // --- 4. 計算引擎 ---
+  const sortedVisibleHeaders = useMemo(() => {
+    return [
+      ...examHeaders.filter(h => h.type === 'exam' && examVisibility[h.id]),
+      ...examHeaders.filter(h => h.type === 'quiz'),
+      ...examHeaders.filter(h => h.type === 'bonus')
+    ];
+  }, [examHeaders, examVisibility]);
+
   const totalWeight = useMemo(() => {
     const w = weights || DEFAULT_WEIGHTS;
     const v = examVisibility || DEFAULT_VISIBILITY;
@@ -197,6 +208,55 @@ function App() {
     });
     return results;
   }, [studentList, scores, examHeaders, examVisibility, weights, pickBestCount, isPaddingZero]);
+
+  // --- 5. 匯出與匯入功能 ---
+  const handleExportExcel = () => {
+    if (!currentClass || studentList.length === 0) return;
+    const headers = ["NO", "姓名", ...sortedVisibleHeaders.map(h => h.name), "平時平均", "學期總成績"];
+    const data = studentList.map(s => {
+      const res = calculationResults[s.id] || {};
+      const row = [s.no, s.name];
+      sortedVisibleHeaders.forEach(h => row.push(scores[s.id]?.[h.id] ?? ""));
+      row.push(res.quizAvg, res.semesterTotal);
+      return row;
+    });
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "成績單");
+    XLSX.writeFile(wb, `${academicYear}學年_${semester}學期_${currentClass}班_成績單.xlsx`);
+  };
+
+  const handleExportImage = async () => {
+    if (!exportAreaRef.current || !currentClass) return;
+    try {
+      const dataUrl = await toPng(exportAreaRef.current, { 
+        backgroundColor: '#ffffff', 
+        style: { borderRadius: '0px' },
+        filter: (node) => !node.classList?.contains('no-export') 
+      });
+      const link = document.createElement('a');
+      link.download = `${academicYear}學年_${semester}學期_${currentClass}班_成績單.png`;
+      link.href = dataUrl;
+      link.click();
+    } catch (err) { alert("圖片存檔失敗"); }
+  };
+
+  // 批次匯入處理函數
+  const handleBatchImport = async () => {
+    if (!user || !currentClass || !batchRawData.trim()) return;
+    const lines = batchRawData.split('\n').map(l => l.trim()).filter(l => l !== "");
+    const newScoreBatch = { ...scores };
+    studentList.forEach((student, idx) => {
+      if (lines[idx] !== undefined) {
+        const val = parseInt(lines[idx], 10);
+        const fv = isNaN(val) ? "" : Math.max(0, Math.min(100, val));
+        newScoreBatch[student.id] = { ...(newScoreBatch[student.id] || {}), [batchTargetId]: fv };
+      }
+    });
+    await setDoc(doc(db, `users/${user.uid}/scores`, `${viewPrefix}_${currentClass}`), newScoreBatch);
+    setBatchRawData('');
+    alert("批次匯入完成！");
+  };
 
   const handleScoreChange = async (sid, hid, val) => {
     if (!user || !currentClass) return;
@@ -259,17 +319,9 @@ function App() {
 
   const scrollToRight = () => { if (tableContainerRef.current) { setTimeout(() => { tableContainerRef.current.scrollTo({ left: tableContainerRef.current.scrollWidth, behavior: 'smooth' }); }, 150); } };
 
-  // --- 5. 路由處理 ---
-  const urlParams = new URLSearchParams(window.location.search);
-  if (urlParams.get('uid') && urlParams.get('examId')) {
-    return <AssistantInputView teacherUid={urlParams.get('uid')} year={urlParams.get('year')} semester={urlParams.get('semester')} className={urlParams.get('class')} examId={urlParams.get('examId')} customName={urlParams.get('examName')} />;
-  }
-
   if (authLoading) return <LoadingScreen text="正在確認身分..." />;
   if (!user) return <LoginScreen onLogin={handleLogin} />;
   if (!userProfile) return <OnboardingScreen user={user} onComplete={(data) => setUserProfile(data)} />;
-
-  const sortedVisibleHeaders = [ ...examHeaders.filter(h => h.type === 'exam' && examVisibility[h.id]), ...examHeaders.filter(h => h.type === 'quiz'), ...examHeaders.filter(h => h.type === 'bonus') ];
 
   return (
     <MainLayout 
@@ -303,6 +355,25 @@ function App() {
             </button>
           </div>
           <input type="file" ref={fileInputRef} hidden onChange={handleExcelImport} accept=".xlsx, .xls" />
+
+          {/* 恢復：批次登錄模式面板 */}
+          <CollapsiblePanel title="批次登錄模式" icon={<ClipboardPaste size={20} />} isOpen={openPanel === 'batch'} onToggle={() => setOpenPanel(openPanel === 'batch' ? null : 'batch')}>
+            <div className="p-5 pt-0 space-y-4 font-black text-slate-700">
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">目標成績欄位</label>
+                <select value={batchTargetId} onChange={(e)=>setBatchTargetId(e.target.value)} className="w-full bg-slate-50 p-4 rounded-2xl font-bold outline-none ring-2 ring-slate-100">
+                  {sortedVisibleHeaders.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">貼上成績清單 (一行一個)</label>
+                <textarea value={batchRawData} onChange={(e)=>setBatchRawData(e.target.value)} rows={6} placeholder="請複製 Excel 欄位貼上..." className="w-full bg-slate-50 p-4 rounded-2xl font-mono text-lg outline-none ring-2 ring-slate-100 resize-none" />
+              </div>
+              <button onClick={handleBatchImport} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold shadow-lg hover:bg-black transition-all flex items-center justify-center gap-2">
+                <CheckCircle2 size={20} /> 立即一次性匯入
+              </button>
+            </div>
+          </CollapsiblePanel>
 
           <CollapsiblePanel title="成績比例設定" icon={<Settings2 size={20} />} isOpen={openPanel === 'rules'} onToggle={() => setOpenPanel(openPanel === 'rules' ? null : 'rules')}>
             <div className="p-5 pt-0 space-y-4 font-black">
@@ -339,6 +410,11 @@ function App() {
             <button onClick={() => { const newHeaders = [...examHeaders, { id: `b${Date.now()}`, name: `優異加分`, type: 'bonus', isLocked: true }]; setExamHeaders(newHeaders); saveClassConfig({ examHeaders: newHeaders }); scrollToRight(); }} className="w-full py-5 bg-emerald-600 text-white rounded-[24px] text-sm shadow-lg flex items-center justify-center gap-2 hover:bg-emerald-700 transition-all font-bold font-sans"><Award size={18} /> 增加優異加分</button>
           </div>
 
+          <div className="grid grid-cols-2 gap-3">
+            <button onClick={handleExportExcel} className="w-full py-4 bg-white border-2 border-slate-200 text-slate-600 rounded-[20px] text-xs font-bold flex items-center justify-center gap-2 hover:bg-slate-50 transition-all font-sans shadow-sm"><Download size={16} /> 另存 EXCEL</button>
+            <button onClick={handleExportImage} className="w-full py-4 bg-white border-2 border-slate-200 text-slate-600 rounded-[20px] text-xs font-bold flex items-center justify-center gap-2 hover:bg-slate-50 transition-all font-sans shadow-sm"><ImageIcon size={16} /> 另存圖片檔</button>
+          </div>
+
           <div className="bg-amber-50 rounded-[24px] p-6 border-2 border-amber-200 space-y-4 shadow-sm font-black text-amber-900">
             <h5 className="font-bold text-xl flex items-center gap-3"><Lightbulb size={24} className="text-amber-600" /> 操作小撇步</h5>
             <ul className="text-base space-y-4 leading-relaxed font-bold font-sans">
@@ -351,6 +427,7 @@ function App() {
       }
     >
       <div ref={exportAreaRef} className="p-2 font-sans">
+        {/* 此處保留原本成績表格區域內容，因與邏輯無關故不重複貼上，請維持你原本的表格 JSX */}
         <div className="mb-8 font-black">
           <div className="flex flex-col lg:flex-row lg:items-center gap-6 mb-10 text-slate-900">
             <h1 className="text-4xl lg:text-5xl font-bold tracking-tighter">成績管理中心</h1>
