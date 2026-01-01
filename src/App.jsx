@@ -144,6 +144,23 @@ function App() {
     await setDoc(doc(db, `users/${user.uid}/metadata`, `${viewPrefix}_${currentClass}`), updates, { merge: true });
   };
 
+  // --- 修正：補上刪除班級函數 ---
+  const handleDeleteClass = async (className) => {
+    if (!window.confirm(`確定要刪除「${className}」班的所有成績與學生資料嗎？此動作無法復原。`)) return;
+    try {
+      const combinedId = `${viewPrefix}_${className}`;
+      await deleteDoc(doc(db, `users/${user.uid}/metadata`, combinedId));
+      await deleteDoc(doc(db, `users/${user.uid}/scores`, combinedId));
+      if (currentClass === className) {
+        setCurrentClass(null);
+        setStudentList([]);
+        setScores({});
+      }
+    } catch (err) {
+      alert("刪除失敗");
+    }
+  };
+
   // --- 4. 計算引擎 ---
   const totalWeight = useMemo(() => {
     const w = weights || DEFAULT_WEIGHTS;
@@ -330,8 +347,6 @@ function App() {
               <li>• <b>小老師模式：</b>點擊標題旁的 QR Code 協助登錄。</li>
             </ul>
           </div>
-          
-          {/* 此處已移除重複的 visitCount 區塊 */}
         </div>
       }
     >
