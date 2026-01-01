@@ -330,11 +330,8 @@ function App() {
               <li>• <b>小老師模式：</b>點擊標題旁的 QR Code 協助登錄。</li>
             </ul>
           </div>
-
-          <div className="bg-slate-900 rounded-[32px] p-8 mt-10 shadow-2xl border border-slate-800 font-black">
-             <div className="text-[10px] text-slate-500 uppercase tracking-[0.2em] mb-4">System Traffic</div>
-             <div className="flex items-end gap-4"><div className="text-6xl font-black text-indigo-500 font-mono leading-none tracking-tighter">{visitCount}</div><div className="text-slate-400 font-bold pb-1 uppercase text-xs tracking-widest">Visits</div></div>
-          </div>
+          
+          {/* 此處已移除重複的 visitCount 區塊 */}
         </div>
       }
     >
