@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import MainLayout from './layouts/MainLayout';
 import { 
   Lock, Unlock, Plus, Percent, ChevronDown, ChevronUp, 
-  FileUp, Users, Settings2, ClipboardPaste, CheckCircle2, Trash2, Award, AlertCircle, Scale, BarChart3, Download, Image as ImageIcon, QrCode, X, Send, CalendarDays, XCircle, LogOut, GraduationCap, ShieldCheck, MapPin, School, Lightbulb, Loader2
+  FileUp, Users, Settings2, ClipboardPaste, CheckCircle2, Trash2, Award, AlertCircle, Scale, BarChart3, Download, Image as ImageIcon, QrCode, X, Send, CalendarDays, XCircle, LogOut, GraduationCap, ShieldCheck, MapPin, School, Lightbulb, Loader2, Copy
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { toPng } from 'html-to-image';
@@ -59,10 +59,11 @@ function App() {
   const [scores, setScores] = useState({});
 
   const [isImporting, setIsImporting] = useState(false);
-  const [openPanel, setOpenPanel] = useState('batch'); // 預設開啟批次面板
+  const [openPanel, setOpenPanel] = useState('batch'); 
   const [isQRModalOpen, setIsQRModalOpen] = useState(false);
   const [qrTarget, setQRTarget] = useState(null);
   const [isClassEditMode, setIsClassEditMode] = useState(false);
+  const [isCopied, setIsCopied] = useState(false);
 
   // 批次匯入狀態
   const [batchTargetId, setBatchTargetId] = useState('q1');
@@ -71,6 +72,7 @@ function App() {
   const fileInputRef = useRef(null);
   const tableContainerRef = useRef(null);
   const exportAreaRef = useRef(null);
+  const trafficIncremented = useRef(false);
 
   const quizCount = examHeaders.filter(h => h.type === 'quiz').length;
   const viewPrefix = `${academicYear}_${semester}`; 
@@ -93,9 +95,12 @@ function App() {
   // --- 2. 流量統計 ---
   useEffect(() => {
     const trafficRef = doc(db, "system", "traffic");
-    updateDoc(trafficRef, { views: increment(1) }).catch(() => {
-      setDoc(trafficRef, { views: 1 }, { merge: true });
-    });
+    if (!trafficIncremented.current) {
+        updateDoc(trafficRef, { views: increment(1) }).catch(() => {
+            setDoc(trafficRef, { views: 1 }, { merge: true });
+        });
+        trafficIncremented.current = true;
+    }
     const unsub = onSnapshot(trafficRef, (docSnap) => {
       if (docSnap.exists()) setVisitCount(docSnap.data().views || 0);
     });
@@ -116,6 +121,7 @@ function App() {
       });
       const sortedClasses = classes.sort();
       setAvailableClasses(sortedClasses);
+      
       if (sortedClasses.length === 0) {
         setCurrentClass(null);
         setStudentList([]);
@@ -161,6 +167,10 @@ function App() {
       const combinedId = `${viewPrefix}_${className}`;
       await deleteDoc(doc(db, `users/${user.uid}/metadata`, combinedId));
       await deleteDoc(doc(db, `users/${user.uid}/scores`, combinedId));
+      if (currentClass === className) {
+          setCurrentClass(null);
+          setStudentList([]);
+      }
     } catch (err) { alert("刪除失敗"); }
   };
 
@@ -241,7 +251,6 @@ function App() {
     } catch (err) { alert("圖片存檔失敗"); }
   };
 
-  // 批次匯入處理函數
   const handleBatchImport = async () => {
     if (!user || !currentClass || !batchRawData.trim()) return;
     const lines = batchRawData.split('\n').map(l => l.trim()).filter(l => l !== "");
@@ -319,9 +328,24 @@ function App() {
 
   const scrollToRight = () => { if (tableContainerRef.current) { setTimeout(() => { tableContainerRef.current.scrollTo({ left: tableContainerRef.current.scrollWidth, behavior: 'smooth' }); }, 150); } };
 
+  // --- 路由判定 ---
+  const urlParams = new URLSearchParams(window.location.search);
+  const paramUid = urlParams.get('uid');
+  const paramExamId = urlParams.get('examId');
+
+  if (paramUid && paramExamId) {
+    return <AssistantInputView teacherUid={paramUid} year={urlParams.get('year')} semester={urlParams.get('semester')} className={urlParams.get('class')} examId={paramExamId} customName={urlParams.get('examName')} />;
+  }
+
   if (authLoading) return <LoadingScreen text="正在確認身分..." />;
   if (!user) return <LoginScreen onLogin={handleLogin} />;
   if (!userProfile) return <OnboardingScreen user={user} onComplete={(data) => setUserProfile(data)} />;
+
+  const handleCopyLink = (url) => {
+    navigator.clipboard.writeText(url);
+    setIsCopied(true);
+    setTimeout(() => setIsCopied(false), 2000);
+  };
 
   return (
     <MainLayout 
@@ -356,7 +380,6 @@ function App() {
           </div>
           <input type="file" ref={fileInputRef} hidden onChange={handleExcelImport} accept=".xlsx, .xls" />
 
-          {/* 恢復：批次登錄模式面板 */}
           <CollapsiblePanel title="批次登錄模式" icon={<ClipboardPaste size={20} />} isOpen={openPanel === 'batch'} onToggle={() => setOpenPanel(openPanel === 'batch' ? null : 'batch')}>
             <div className="p-5 pt-0 space-y-4 font-black text-slate-700">
               <div className="space-y-2">
@@ -367,7 +390,7 @@ function App() {
               </div>
               <div className="space-y-2">
                 <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">貼上成績清單 (一行一個)</label>
-                <textarea value={batchRawData} onChange={(e)=>setBatchRawData(e.target.value)} rows={6} placeholder="請複製 Excel 欄位貼上..." className="w-full bg-slate-50 p-4 rounded-2xl font-mono text-lg outline-none ring-2 ring-slate-100 resize-none" />
+                <textarea value={batchRawData} onChange={(e)=>setBatchRawData(e.target.value)} rows={6} placeholder="請從 Excel 複製一欄貼上..." className="w-full bg-slate-50 p-4 rounded-2xl font-mono text-lg outline-none ring-2 ring-slate-100 resize-none" />
               </div>
               <button onClick={handleBatchImport} className="w-full py-4 bg-slate-900 text-white rounded-2xl font-bold shadow-lg hover:bg-black transition-all flex items-center justify-center gap-2">
                 <CheckCircle2 size={20} /> 立即一次性匯入
@@ -376,7 +399,7 @@ function App() {
           </CollapsiblePanel>
 
           <CollapsiblePanel title="成績比例設定" icon={<Settings2 size={20} />} isOpen={openPanel === 'rules'} onToggle={() => setOpenPanel(openPanel === 'rules' ? null : 'rules')}>
-            <div className="p-5 pt-0 space-y-4 font-black">
+            <div className="p-5 pt-0 space-y-4 font-black text-slate-700">
               {[ { label: '第一次期中考', key: 'e1' }, { label: '第二次期中考', key: 'e2' }, { label: '期末考', key: 'e3' }, { label: '平時成績比例', key: 'quizAvg' } ].map(k => (
                 <div key={k.key} className={`flex justify-between items-center bg-slate-900 rounded-2xl p-4 ${k.key !== 'quizAvg' && !examVisibility[k.key] ? 'opacity-40' : ''}`}>
                    <div className="flex items-center gap-3">
@@ -411,8 +434,8 @@ function App() {
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <button onClick={handleExportExcel} className="w-full py-4 bg-white border-2 border-slate-200 text-slate-600 rounded-[20px] text-xs font-bold flex items-center justify-center gap-2 hover:bg-slate-50 transition-all font-sans shadow-sm"><Download size={16} /> 另存 EXCEL</button>
-            <button onClick={handleExportImage} className="w-full py-4 bg-white border-2 border-slate-200 text-slate-600 rounded-[20px] text-xs font-bold flex items-center justify-center gap-2 hover:bg-slate-50 transition-all font-sans shadow-sm"><ImageIcon size={16} /> 另存圖片檔</button>
+            <button onClick={handleExportExcel} className="w-full py-4 bg-white border-2 border-slate-200 text-slate-600 rounded-[20px] text-xs font-bold flex items-center justify-center gap-2 hover:bg-slate-50 transition-all shadow-sm"><Download size={16} /> 另存 EXCEL</button>
+            <button onClick={handleExportImage} className="w-full py-4 bg-white border-2 border-slate-200 text-slate-600 rounded-[20px] text-xs font-bold flex items-center justify-center gap-2 hover:bg-slate-50 transition-all shadow-sm"><ImageIcon size={16} /> 另存圖片檔</button>
           </div>
 
           <div className="bg-amber-50 rounded-[24px] p-6 border-2 border-amber-200 space-y-4 shadow-sm font-black text-amber-900">
@@ -427,7 +450,6 @@ function App() {
       }
     >
       <div ref={exportAreaRef} className="p-2 font-sans">
-        {/* 此處保留原本成績表格區域內容，因與邏輯無關故不重複貼上，請維持你原本的表格 JSX */}
         <div className="mb-8 font-black">
           <div className="flex flex-col lg:flex-row lg:items-center gap-6 mb-10 text-slate-900">
             <h1 className="text-4xl lg:text-5xl font-bold tracking-tighter">成績管理中心</h1>
@@ -504,13 +526,34 @@ function App() {
 
       {isQRModalOpen && qrTarget && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[100] flex items-start justify-center p-6 pt-24 font-black">
-          <div className="bg-white rounded-[50px] p-10 max-w-lg w-full shadow-2xl relative">
-            <button onClick={()=>setIsQRModalOpen(false)} className="absolute top-8 right-8 text-slate-300 hover:text-slate-600 transition-colors p-2"><X size={32}/></button>
-            <div className="text-center space-y-6 font-sans">
-              <span className="bg-indigo-100 text-indigo-600 px-6 py-2 rounded-full text-lg font-bold">{qrTarget.class} 班專用</span>
-              <h2 className="text-5xl font-bold text-slate-900 leading-tight">全班成績登錄</h2>
-              <p className="text-slate-400 text-xl font-bold">登錄「<span className="text-indigo-600 font-black underline decoration-indigo-200">{qrTarget.examName}</span>」</p>
-              <div className="bg-slate-50 p-10 rounded-[48px] border-8 border-white shadow-inner flex flex-col items-center"><QRCodeSVG value={`${window.location.origin}${window.location.pathname}?uid=${qrTarget.teacherUid}&year=${qrTarget.year}&semester=${qrTarget.semester}&class=${encodeURIComponent(qrTarget.class)}&examId=${qrTarget.examId}&examName=${encodeURIComponent(qrTarget.examName)}`} size={300} level="H" includeMargin={true} /></div>
+          <div className="bg-white rounded-[50px] p-6 max-w-lg w-full shadow-2xl relative">
+            <button onClick={()=>setIsQRModalOpen(false)} className="absolute top-4 right-4 text-slate-300 hover:text-slate-600 transition-colors p-2"><X size={32}/></button>
+            <div className="text-center space-y-2 font-sans">
+              <span className="bg-indigo-100 text-indigo-600 px-6 py-1 rounded-full text-base font-bold">{qrTarget.class} 班專用</span>
+              <h2 className="text-4xl font-bold text-slate-900 leading-tight">全班成績登錄</h2>
+              <p className="text-slate-400 text-lg font-bold">登錄「<span className="text-indigo-600 font-black underline decoration-indigo-200">{qrTarget.examName}</span>」</p>
+              
+              <div className="bg-slate-50 p-4 rounded-[40px] border-8 border-white shadow-inner flex flex-col items-center">
+                <QRCodeSVG 
+                    value={`${window.location.origin}${window.location.pathname}?uid=${qrTarget.teacherUid}&year=${qrTarget.year}&semester=${qrTarget.semester}&class=${encodeURIComponent(qrTarget.class)}&examId=${qrTarget.examId}&examName=${encodeURIComponent(qrTarget.examName)}`.replace('//?', '/?')} 
+                    size={280} 
+                    level="H" 
+                    includeMargin={true} 
+                />
+              </div>
+
+              <div className="mt-4 w-full space-y-3">
+                <div className="bg-slate-100 p-3 rounded-2xl text-[10px] text-slate-500 break-all font-mono border border-slate-200 text-left leading-relaxed max-h-16 overflow-y-auto">
+                  {`${window.location.origin}${window.location.pathname}?uid=${qrTarget.teacherUid}&year=${qrTarget.year}&semester=${qrTarget.semester}&class=${encodeURIComponent(qrTarget.class)}&examId=${qrTarget.examId}&examName=${encodeURIComponent(qrTarget.examName)}`.replace('//?', '/?')}
+                </div>
+                <button 
+                  onClick={() => handleCopyLink(`${window.location.origin}${window.location.pathname}?uid=${qrTarget.teacherUid}&year=${qrTarget.year}&semester=${qrTarget.semester}&class=${encodeURIComponent(qrTarget.class)}&examId=${qrTarget.examId}&examName=${encodeURIComponent(qrTarget.examName)}`.replace('//?', '/?'))}
+                  className={`w-full py-4 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all ${isCopied ? 'bg-emerald-500 text-white' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg'}`}
+                >
+                  {isCopied ? <CheckCircle2 size={20}/> : <Copy size={20}/>}
+                  {isCopied ? '連結已複製！' : '複製登錄連結給小老師'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
