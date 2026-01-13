@@ -65,7 +65,6 @@ function App() {
   const [isClassEditMode, setIsClassEditMode] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
 
-  // 批次匯入狀態
   const [batchTargetId, setBatchTargetId] = useState('q1');
   const [batchRawData, setBatchRawData] = useState('');
 
@@ -121,7 +120,6 @@ function App() {
       });
       const sortedClasses = classes.sort();
       setAvailableClasses(sortedClasses);
-      
       if (sortedClasses.length === 0) {
         setCurrentClass(null);
         setStudentList([]);
@@ -506,14 +504,39 @@ function App() {
                           const isEmpty = rawVal === undefined || rawVal === '';
                           let displayVal = rawVal; let isAutoZeroed = false;
                           if (isEmpty && h.type === 'quiz' && currentDeficit > 0) { displayVal = '0'; isAutoZeroed = true; currentDeficit--; }
+                          
+                          // 新增：成績低於 60 分變紅色的判定
+                          const isFailing = displayVal !== "" && displayVal !== undefined && parseFloat(displayVal) < 60;
+
                           return (
                             <td key={h.id} className={`p-1 border-b border-r border-slate-100 ${isUsed || isAutoZeroed ? 'bg-indigo-50/20' : ''}`}>
-                              <input type="number" value={displayVal ?? ''} data-row={sIdx} data-col={h.id} onChange={(e) => handleScoreChange(s.id, h.id, e.target.value)} onKeyDown={(e) => handleVerticalTab(e, sIdx, h.id)} className={`w-full h-11 text-center text-xl font-mono bg-transparent border-none outline-none rounded-lg font-black ${isAutoZeroed ? 'text-red-500 animate-pulse' : isUsed ? 'text-indigo-700' : 'text-slate-400 opacity-70'} focus:ring-4 focus:ring-indigo-500/40 focus:bg-white`} placeholder="--" />
+                              <input 
+                                type="number" 
+                                value={displayVal ?? ''} 
+                                data-row={sIdx} 
+                                data-col={h.id} 
+                                onChange={(e) => handleScoreChange(s.id, h.id, e.target.value)} 
+                                onKeyDown={(e) => handleVerticalTab(e, sIdx, h.id)} 
+                                className={`w-full h-11 text-center text-xl font-mono bg-transparent border-none outline-none rounded-lg font-black ${
+                                  isAutoZeroed 
+                                    ? 'text-red-500 animate-pulse' 
+                                    : isFailing 
+                                      ? 'text-red-600/90' // 低於 60 分使用略深的紅色
+                                      : isUsed 
+                                        ? 'text-indigo-700' 
+                                        : 'text-slate-400 opacity-70'
+                                } focus:ring-4 focus:ring-indigo-500/40 focus:bg-white`} 
+                                placeholder="--" 
+                              />
                             </td>
                           );
                         })}
-                        <td className="p-2 border-b border-r border-slate-50 bg-slate-50/50 text-center text-xl font-bold text-slate-400 font-mono tracking-tighter">{res.quizAvg}</td>
-                        <td className="p-2 border-b border-slate-50 bg-indigo-50 text-center text-2xl font-black text-indigo-700 font-mono tracking-tighter">{res.semesterTotal}</td>
+                        <td className={`p-2 border-b border-r border-slate-50 bg-slate-50/50 text-center text-xl font-bold font-mono tracking-tighter ${res.quizAvg < 60 ? 'text-red-600/80' : 'text-slate-400'}`}>
+                          {res.quizAvg}
+                        </td>
+                        <td className={`p-2 border-b border-slate-50 bg-indigo-50 text-center text-2xl font-black font-mono tracking-tighter ${res.semesterTotal < 60 ? 'text-red-600' : 'text-indigo-700'}`}>
+                          {res.semesterTotal}
+                        </td>
                       </tr>
                     );
                   })}
