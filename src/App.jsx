@@ -217,6 +217,39 @@ function App() {
     return results;
   }, [studentList, scores, examHeaders, examVisibility, weights, pickBestCount, isPaddingZero]);
 
+  // --- 新增：班級平均計算邏輯 ---
+  const classAverages = useMemo(() => {
+    if (studentList.length === 0) return {};
+    const avgs = {};
+
+    // 1. 計算個別欄位的平均
+    sortedVisibleHeaders.forEach(h => {
+      let sum = 0;
+      let count = 0;
+      studentList.forEach(s => {
+        const val = parseFloat(scores[s.id]?.[h.id]);
+        if (!isNaN(val)) {
+          sum += val;
+          count++;
+        }
+      });
+      avgs[h.id] = count > 0 ? (sum / count).toFixed(1) : "--";
+    });
+
+    // 2. 計算平時平均與總分的班級平均
+    let quizAvgSum = 0;
+    let totalSum = 0;
+    studentList.forEach(s => {
+      const res = calculationResults[s.id] || { quizAvg: 0, semesterTotal: 0 };
+      quizAvgSum += res.quizAvg;
+      totalSum += res.semesterTotal;
+    });
+    avgs.quizAvg = (quizAvgSum / studentList.length).toFixed(1);
+    avgs.semesterTotal = (totalSum / studentList.length).toFixed(1);
+
+    return avgs;
+  }, [studentList, scores, sortedVisibleHeaders, calculationResults]);
+
   // --- 5. 匯出與匯入功能 ---
   const handleExportExcel = () => {
     if (!currentClass || studentList.length === 0) return;
@@ -228,6 +261,12 @@ function App() {
       row.push(res.quizAvg, res.semesterTotal);
       return row;
     });
+    // 匯出時也加入平均列
+    const avgRow = ["AVG", "班級平均"];
+    sortedVisibleHeaders.forEach(h => avgRow.push(classAverages[h.id]));
+    avgRow.push(classAverages.quizAvg, classAverages.semesterTotal);
+    data.push(avgRow);
+
     const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "成績單");
@@ -504,42 +543,38 @@ function App() {
                           const isEmpty = rawVal === undefined || rawVal === '';
                           let displayVal = rawVal; let isAutoZeroed = false;
                           if (isEmpty && h.type === 'quiz' && currentDeficit > 0) { displayVal = '0'; isAutoZeroed = true; currentDeficit--; }
-                          
-                          // 新增：成績低於 60 分變紅色的判定
-                          const isFailing = displayVal !== "" && displayVal !== undefined && parseFloat(displayVal) < 60;
-
+                          const isFailingAndUsed = isUsed && displayVal !== "" && displayVal !== undefined && parseFloat(displayVal) < 60;
                           return (
                             <td key={h.id} className={`p-1 border-b border-r border-slate-100 ${isUsed || isAutoZeroed ? 'bg-indigo-50/20' : ''}`}>
-                              <input 
-                                type="number" 
-                                value={displayVal ?? ''} 
-                                data-row={sIdx} 
-                                data-col={h.id} 
-                                onChange={(e) => handleScoreChange(s.id, h.id, e.target.value)} 
-                                onKeyDown={(e) => handleVerticalTab(e, sIdx, h.id)} 
-                                className={`w-full h-11 text-center text-xl font-mono bg-transparent border-none outline-none rounded-lg font-black ${
-                                  isAutoZeroed 
-                                    ? 'text-red-500 animate-pulse' 
-                                    : isFailing 
-                                      ? 'text-red-600/90' // 低於 60 分使用略深的紅色
-                                      : isUsed 
-                                        ? 'text-indigo-700' 
-                                        : 'text-slate-400 opacity-70'
-                                } focus:ring-4 focus:ring-indigo-500/40 focus:bg-white`} 
-                                placeholder="--" 
-                              />
+                              <input type="number" value={displayVal ?? ''} data-row={sIdx} data-col={h.id} onChange={(e) => handleScoreChange(s.id, h.id, e.target.value)} onKeyDown={(e) => handleVerticalTab(e, sIdx, h.id)} className={`w-full h-11 text-center text-xl font-mono bg-transparent border-none outline-none rounded-lg font-black ${isAutoZeroed ? 'text-red-500 animate-pulse' : isFailingAndUsed ? 'text-red-600/90' : isUsed ? 'text-indigo-700' : 'text-slate-400 opacity-70'} focus:ring-4 focus:ring-indigo-500/40 focus:bg-white`} placeholder="--" />
                             </td>
                           );
                         })}
-                        <td className={`p-2 border-b border-r border-slate-50 bg-slate-50/50 text-center text-xl font-bold font-mono tracking-tighter ${res.quizAvg < 60 ? 'text-red-600/80' : 'text-slate-400'}`}>
-                          {res.quizAvg}
-                        </td>
-                        <td className={`p-2 border-b border-slate-50 bg-indigo-50 text-center text-2xl font-black font-mono tracking-tighter ${res.semesterTotal < 60 ? 'text-red-600' : 'text-indigo-700'}`}>
-                          {res.semesterTotal}
-                        </td>
+                        <td className={`p-2 border-b border-r border-slate-50 bg-slate-50/50 text-center text-xl font-bold font-mono tracking-tighter ${res.quizAvg < 60 ? 'text-red-600/80' : 'text-slate-400'}`}>{res.quizAvg}</td>
+                        <td className={`p-2 border-b border-slate-50 bg-indigo-50 text-center text-2xl font-black font-mono tracking-tighter ${res.semesterTotal < 60 ? 'text-red-600' : 'text-indigo-700'}`}>{res.semesterTotal}</td>
                       </tr>
                     );
                   })}
+                  {/* --- 新增：班級平均列 --- */}
+                  <tr className="bg-slate-100/80 font-black border-t-2 border-slate-200">
+                    <td className="p-3 sticky left-0 bg-slate-100 z-10 text-center text-indigo-600 font-mono">AVG</td>
+                    <td className="p-3 sticky left-[40px] bg-slate-100 z-10 text-center text-slate-500 text-sm whitespace-nowrap">班級平均</td>
+                    {sortedVisibleHeaders.map(h => {
+                      const avgVal = classAverages[h.id];
+                      const isFailing = avgVal !== "--" && parseFloat(avgVal) < 60;
+                      return (
+                        <td key={h.id} className={`p-3 text-center font-mono text-lg border-r border-slate-200 ${isFailing ? 'text-red-600/90' : 'text-slate-700'}`}>
+                          {avgVal}
+                        </td>
+                      );
+                    })}
+                    <td className={`p-3 text-center font-mono text-lg border-r border-slate-200 ${parseFloat(classAverages.quizAvg) < 60 ? 'text-red-600/90' : 'text-slate-500'}`}>
+                      {classAverages.quizAvg}
+                    </td>
+                    <td className={`p-3 text-center font-mono text-2xl bg-indigo-100/50 ${parseFloat(classAverages.semesterTotal) < 60 ? 'text-red-600' : 'text-indigo-800'}`}>
+                      {classAverages.semesterTotal}
+                    </td>
+                  </tr>
                 </tbody>
               </table>
             </div>
@@ -555,24 +590,14 @@ function App() {
               <span className="bg-indigo-100 text-indigo-600 px-6 py-1 rounded-full text-base font-bold">{qrTarget.class} 班專用</span>
               <h2 className="text-4xl font-bold text-slate-900 leading-tight">全班成績登錄</h2>
               <p className="text-slate-400 text-lg font-bold">登錄「<span className="text-indigo-600 font-black underline decoration-indigo-200">{qrTarget.examName}</span>」</p>
-              
               <div className="bg-slate-50 p-4 rounded-[40px] border-8 border-white shadow-inner flex flex-col items-center">
-                <QRCodeSVG 
-                    value={`${window.location.origin}${window.location.pathname}?uid=${qrTarget.teacherUid}&year=${qrTarget.year}&semester=${qrTarget.semester}&class=${encodeURIComponent(qrTarget.class)}&examId=${qrTarget.examId}&examName=${encodeURIComponent(qrTarget.examName)}`.replace('//?', '/?')} 
-                    size={280} 
-                    level="H" 
-                    includeMargin={true} 
-                />
+                <QRCodeSVG value={`${window.location.origin}${window.location.pathname}?uid=${qrTarget.teacherUid}&year=${qrTarget.year}&semester=${qrTarget.semester}&class=${encodeURIComponent(qrTarget.class)}&examId=${qrTarget.examId}&examName=${encodeURIComponent(qrTarget.examName)}`.replace('//?', '/?')} size={280} level="H" includeMargin={true} />
               </div>
-
               <div className="mt-4 w-full space-y-3">
                 <div className="bg-slate-100 p-3 rounded-2xl text-[10px] text-slate-500 break-all font-mono border border-slate-200 text-left leading-relaxed max-h-16 overflow-y-auto">
                   {`${window.location.origin}${window.location.pathname}?uid=${qrTarget.teacherUid}&year=${qrTarget.year}&semester=${qrTarget.semester}&class=${encodeURIComponent(qrTarget.class)}&examId=${qrTarget.examId}&examName=${encodeURIComponent(qrTarget.examName)}`.replace('//?', '/?')}
                 </div>
-                <button 
-                  onClick={() => handleCopyLink(`${window.location.origin}${window.location.pathname}?uid=${qrTarget.teacherUid}&year=${qrTarget.year}&semester=${qrTarget.semester}&class=${encodeURIComponent(qrTarget.class)}&examId=${qrTarget.examId}&examName=${encodeURIComponent(qrTarget.examName)}`.replace('//?', '/?'))}
-                  className={`w-full py-4 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all ${isCopied ? 'bg-emerald-500 text-white' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg'}`}
-                >
+                <button onClick={() => handleCopyLink(`${window.location.origin}${window.location.pathname}?uid=${qrTarget.teacherUid}&year=${qrTarget.year}&semester=${qrTarget.semester}&class=${encodeURIComponent(qrTarget.class)}&examId=${qrTarget.examId}&examName=${encodeURIComponent(qrTarget.examName)}`.replace('//?', '/?'))} className={`w-full py-4 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all ${isCopied ? 'bg-emerald-500 text-white' : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg'}`}>
                   {isCopied ? <CheckCircle2 size={20}/> : <Copy size={20}/>}
                   {isCopied ? '連結已複製！' : '複製登錄連結給小老師'}
                 </button>
