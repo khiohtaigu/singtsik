@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import MainLayout from './layouts/MainLayout';
 import { 
   Lock, Unlock, Plus, Percent, ChevronDown, ChevronUp, 
-  FileUp, Users, Settings2, ClipboardPaste, CheckCircle2, Trash2, Award, AlertCircle, Scale, BarChart3, Download, Image as ImageIcon, QrCode, X, Send, CalendarDays, XCircle, LogOut, GraduationCap, ShieldCheck, MapPin, School, Lightbulb, Loader2, Copy
+  FileUp, Users, Settings2, ClipboardPaste, CheckCircle2, Trash2, Award, AlertCircle, Scale, BarChart3, Download, Image as ImageIcon, QrCode, X, Send, CalendarDays, XCircle, LogOut, GraduationCap, ShieldCheck, MapPin, School, Lightbulb, Loader2, Copy, Undo2, Redo2
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { toPng } from 'html-to-image';
@@ -65,6 +65,11 @@ function App() {
   const [isClassEditMode, setIsClassEditMode] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
 
+  // 復原/重做歷史堆疊
+  const [historyPast, setHistoryPast] = useState([]);
+  const [historyFuture, setHistoryFuture] = useState([]);
+
+  // 批次匯入狀態
   const [batchTargetId, setBatchTargetId] = useState('q1');
   const [batchRawData, setBatchRawData] = useState('');
 
@@ -154,8 +159,67 @@ function App() {
     return () => { unsubMeta(); unsubScore(); };
   }, [currentClass, viewPrefix, user?.uid]);
 
+  // --- 歷史紀錄功能邏輯 ---
+  const recordHistory = () => {
+    const snapshot = {
+      scores: JSON.parse(JSON.stringify(scores)),
+      examHeaders: [...examHeaders],
+      weights: {...weights},
+      examVisibility: {...examVisibility},
+      pickBestCount,
+      isPaddingZero
+    };
+    setHistoryPast(prev => [...prev.slice(-19), snapshot]); // 最多紀錄 20 步
+    setHistoryFuture([]); // 清除重做路徑
+  };
+
+  const undo = async () => {
+    if (historyPast.length === 0) return;
+    const previous = historyPast[historyPast.length - 1];
+    const current = { scores, examHeaders, weights, examVisibility, pickBestCount, isPaddingZero };
+    
+    setHistoryFuture(prev => [current, ...prev]);
+    setHistoryPast(prev => prev.slice(0, -1));
+
+    // 同步到 Firebase
+    if (user && currentClass) {
+        const combinedId = `${viewPrefix}_${currentClass}`;
+        await setDoc(doc(db, `users/${user.uid}/scores`, combinedId), previous.scores);
+        await setDoc(doc(db, `users/${user.uid}/metadata`, combinedId), {
+            examHeaders: previous.examHeaders,
+            weights: previous.weights,
+            examVisibility: previous.examVisibility,
+            pickBestCount: previous.pickBestCount,
+            isPaddingZero: previous.isPaddingZero
+        }, { merge: true });
+    }
+  };
+
+  const redo = async () => {
+    if (historyFuture.length === 0) return;
+    const next = historyFuture[0];
+    const current = { scores, examHeaders, weights, examVisibility, pickBestCount, isPaddingZero };
+
+    setHistoryPast(prev => [...prev, current]);
+    setHistoryFuture(prev => prev.slice(1));
+
+    // 同步到 Firebase
+    if (user && currentClass) {
+        const combinedId = `${viewPrefix}_${currentClass}`;
+        await setDoc(doc(db, `users/${user.uid}/scores`, combinedId), next.scores);
+        await setDoc(doc(db, `users/${user.uid}/metadata`, combinedId), {
+            examHeaders: next.examHeaders,
+            weights: next.weights,
+            examVisibility: next.examVisibility,
+            pickBestCount: next.pickBestCount,
+            isPaddingZero: next.isPaddingZero
+        }, { merge: true });
+    }
+  };
+
   const saveClassConfig = async (updates) => {
     if (!user?.uid || !currentClass) return;
+    recordHistory();
     await setDoc(doc(db, `users/${user.uid}/metadata`, `${viewPrefix}_${currentClass}`), updates, { merge: true });
   };
 
@@ -165,10 +229,6 @@ function App() {
       const combinedId = `${viewPrefix}_${className}`;
       await deleteDoc(doc(db, `users/${user.uid}/metadata`, combinedId));
       await deleteDoc(doc(db, `users/${user.uid}/scores`, combinedId));
-      if (currentClass === className) {
-          setCurrentClass(null);
-          setStudentList([]);
-      }
     } catch (err) { alert("刪除失敗"); }
   };
 
@@ -217,36 +277,24 @@ function App() {
     return results;
   }, [studentList, scores, examHeaders, examVisibility, weights, pickBestCount, isPaddingZero]);
 
-  // --- 新增：班級平均計算邏輯 ---
   const classAverages = useMemo(() => {
     if (studentList.length === 0) return {};
     const avgs = {};
-
-    // 1. 計算個別欄位的平均
     sortedVisibleHeaders.forEach(h => {
-      let sum = 0;
-      let count = 0;
+      let sum = 0; let count = 0;
       studentList.forEach(s => {
         const val = parseFloat(scores[s.id]?.[h.id]);
-        if (!isNaN(val)) {
-          sum += val;
-          count++;
-        }
+        if (!isNaN(val)) { sum += val; count++; }
       });
       avgs[h.id] = count > 0 ? (sum / count).toFixed(1) : "--";
     });
-
-    // 2. 計算平時平均與總分的班級平均
-    let quizAvgSum = 0;
-    let totalSum = 0;
+    let quizAvgSum = 0; let totalSum = 0;
     studentList.forEach(s => {
       const res = calculationResults[s.id] || { quizAvg: 0, semesterTotal: 0 };
-      quizAvgSum += res.quizAvg;
-      totalSum += res.semesterTotal;
+      quizAvgSum += res.quizAvg; totalSum += res.semesterTotal;
     });
-    avgs.quizAvg = (quizAvgSum / studentList.length).toFixed(1);
-    avgs.semesterTotal = (totalSum / studentList.length).toFixed(1);
-
+    avgs.quizAvg = studentList.length > 0 ? (quizAvgSum / studentList.length).toFixed(1) : "0";
+    avgs.semesterTotal = studentList.length > 0 ? (totalSum / studentList.length).toFixed(1) : "0";
     return avgs;
   }, [studentList, scores, sortedVisibleHeaders, calculationResults]);
 
@@ -261,12 +309,10 @@ function App() {
       row.push(res.quizAvg, res.semesterTotal);
       return row;
     });
-    // 匯出時也加入平均列
     const avgRow = ["AVG", "班級平均"];
     sortedVisibleHeaders.forEach(h => avgRow.push(classAverages[h.id]));
     avgRow.push(classAverages.quizAvg, classAverages.semesterTotal);
     data.push(avgRow);
-
     const ws = XLSX.utils.aoa_to_sheet([headers, ...data]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "成績單");
@@ -290,12 +336,13 @@ function App() {
 
   const handleBatchImport = async () => {
     if (!user || !currentClass || !batchRawData.trim()) return;
+    recordHistory();
     const lines = batchRawData.split('\n').map(l => l.trim()).filter(l => l !== "");
     const newScoreBatch = { ...scores };
     studentList.forEach((student, idx) => {
       if (lines[idx] !== undefined) {
-        const val = parseInt(lines[idx], 10);
-        const fv = isNaN(val) ? "" : Math.max(0, Math.min(100, val));
+        const val = parseFloat(lines[idx]);
+        const fv = isNaN(val) ? "" : Math.max(0, Math.min(100, Math.round(val)));
         newScoreBatch[student.id] = { ...(newScoreBatch[student.id] || {}), [batchTargetId]: fv };
       }
     });
@@ -306,23 +353,33 @@ function App() {
 
   const handleScoreChange = async (sid, hid, val) => {
     if (!user || !currentClass) return;
-    let fv = val === "" ? "" : Math.max(0, Math.min(100, parseInt(val, 10)));
+    recordHistory();
+    if (val === "") {
+        await setDoc(doc(db, `users/${user.uid}/scores`, `${viewPrefix}_${currentClass}`), { [sid]: { ...(scores[sid] || {}), [hid]: "" } }, { merge: true });
+        return;
+    }
+    let num = parseFloat(val);
+    if (isNaN(num)) return;
+    let fv = Math.max(0, Math.min(100, Math.round(num)));
     await setDoc(doc(db, `users/${user.uid}/scores`, `${viewPrefix}_${currentClass}`), { [sid]: { ...(scores[sid] || {}), [hid]: fv } }, { merge: true });
   };
 
   const handleUpdateHeaderName = (id, newName) => {
+    recordHistory();
     const newHeaders = examHeaders.map(h => h.id === id ? { ...h, name: newName } : h);
     setExamHeaders(newHeaders); saveClassConfig({ examHeaders: newHeaders });
   };
 
   const handleDeleteColumn = (id) => {
     if (window.confirm("確定要刪除此成績欄位嗎？")) {
+      recordHistory();
       const newHeaders = examHeaders.filter(h => h.id !== id);
       setExamHeaders(newHeaders); saveClassConfig({ examHeaders: newHeaders });
     }
   };
 
   const toggleHeaderLock = (id) => {
+    recordHistory();
     const newHeaders = examHeaders.map(h => h.id === id ? { ...h, isLocked: !h.isLocked } : h);
     setExamHeaders(newHeaders); saveClassConfig({ examHeaders: newHeaders });
   };
@@ -501,7 +558,13 @@ function App() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-3 no-export">
-            <div className="flex items-center gap-2 mr-4 bg-slate-100 p-2 px-4 rounded-2xl border border-slate-200 shadow-inner font-black"><button onClick={() => setIsClassEditMode(!isClassEditMode)} className={`p-2 rounded-xl transition-all ${isClassEditMode ? 'bg-indigo-600 text-white rotate-12 shadow-lg' : 'bg-orange-100 text-orange-600'}`}>{isClassEditMode ? <Unlock size={20} /> : <Lock size={20} />}</button><span className="text-[10px] font-black text-slate-400 tracking-widest uppercase">Class Control</span></div>
+            <div className="flex items-center gap-2 mr-4 bg-slate-100 p-2 px-4 rounded-2xl border border-slate-200 shadow-inner font-black">
+                <button onClick={() => setIsClassEditMode(!isClassEditMode)} className={`p-2 rounded-xl transition-all ${isClassEditMode ? 'bg-indigo-600 text-white rotate-12 shadow-lg' : 'bg-orange-100 text-orange-600'}`}>{isClassEditMode ? <Unlock size={20} /> : <Lock size={20} />}</button>
+                <div className="h-6 w-px bg-slate-200 mx-1"></div>
+                {/* 歷史紀錄按鈕區 */}
+                <button disabled={historyPast.length === 0} onClick={undo} className={`p-2 rounded-xl transition-all ${historyPast.length > 0 ? 'text-indigo-600 hover:bg-indigo-50' : 'text-slate-300 opacity-50 cursor-not-allowed'}`} title="復原 (Undo)"><Undo2 size={20} /></button>
+                <button disabled={historyFuture.length === 0} onClick={redo} className={`p-2 rounded-xl transition-all ${historyFuture.length > 0 ? 'text-indigo-600 hover:bg-indigo-50' : 'text-slate-300 opacity-50 cursor-not-allowed'}`} title="重做 (Redo)"><Redo2 size={20} /></button>
+            </div>
             {availableClasses.length > 0 ? availableClasses.map(cls => (
               <div key={cls} className="relative group font-black"><button onClick={() => setCurrentClass(cls)} className={`px-10 py-4 rounded-[20px] font-bold text-xl transition-all ${currentClass === cls ? 'bg-indigo-600 text-white shadow-xl scale-105' : 'bg-white text-slate-400 hover:bg-slate-50'}`}>{cls} 班</button>{isClassEditMode && <button onClick={(e) => { e.stopPropagation(); handleDeleteClass(cls); }} className="absolute -top-3 -right-3 bg-white text-rose-500 rounded-full shadow-2xl border-2 border-rose-50"><XCircle size={32} fill="white" /></button>}</div>
             )) : <p className="text-slate-300 font-bold ml-4 text-lg italic">尚無資料，請由右側進行匯入</p>}
@@ -555,7 +618,6 @@ function App() {
                       </tr>
                     );
                   })}
-                  {/* --- 新增：班級平均列 --- */}
                   <tr className="bg-slate-100/80 font-black border-t-2 border-slate-200">
                     <td className="p-3 sticky left-0 bg-slate-100 z-10 text-center text-indigo-600 font-mono">AVG</td>
                     <td className="p-3 sticky left-[40px] bg-slate-100 z-10 text-center text-slate-500 text-sm whitespace-nowrap">班級平均</td>
@@ -563,17 +625,11 @@ function App() {
                       const avgVal = classAverages[h.id];
                       const isFailing = avgVal !== "--" && parseFloat(avgVal) < 60;
                       return (
-                        <td key={h.id} className={`p-3 text-center font-mono text-lg border-r border-slate-200 ${isFailing ? 'text-red-600/90' : 'text-slate-700'}`}>
-                          {avgVal}
-                        </td>
+                        <td key={h.id} className={`p-3 text-center font-mono text-lg border-r border-slate-200 ${isFailing ? 'text-red-600/90' : 'text-slate-700'}`}>{avgVal}</td>
                       );
                     })}
-                    <td className={`p-3 text-center font-mono text-lg border-r border-slate-200 ${parseFloat(classAverages.quizAvg) < 60 ? 'text-red-600/90' : 'text-slate-500'}`}>
-                      {classAverages.quizAvg}
-                    </td>
-                    <td className={`p-3 text-center font-mono text-2xl bg-indigo-100/50 ${parseFloat(classAverages.semesterTotal) < 60 ? 'text-red-600' : 'text-indigo-800'}`}>
-                      {classAverages.semesterTotal}
-                    </td>
+                    <td className={`p-3 text-center font-mono text-lg border-r border-slate-200 ${parseFloat(classAverages.quizAvg) < 60 ? 'text-red-600/90' : 'text-slate-500'}`}>{classAverages.quizAvg}</td>
+                    <td className={`p-3 text-center font-mono text-2xl bg-indigo-100/50 ${parseFloat(classAverages.semesterTotal) < 60 ? 'text-red-600' : 'text-indigo-800'}`}>{classAverages.semesterTotal}</td>
                   </tr>
                 </tbody>
               </table>
@@ -633,8 +689,13 @@ function AssistantInputView({ teacherUid, year, semester, className, examId, cus
   }, [classId, teacherUid]);
 
   const updateScore = async (sid, val) => {
-    const n = parseInt(val, 10);
-    const scoreVal = isNaN(n) ? "" : Math.max(0, Math.min(100, n));
+    if (val === "") {
+        await setDoc(doc(db, `users/${teacherUid}/scores`, classId), { [sid]: { [examId]: "" } }, { merge: true });
+        setLocalScores(prev => ({ ...prev, [sid]: { ...prev[sid], [examId]: "" } }));
+        return;
+    }
+    const num = parseFloat(val);
+    const scoreVal = isNaN(num) ? "" : Math.max(0, Math.min(100, Math.round(num)));
     setSaveStatus('saving');
     try {
       await setDoc(doc(db, `users/${teacherUid}/scores`, classId), { [sid]: { [examId]: scoreVal } }, { merge: true });
